@@ -144,38 +144,38 @@ def load_data():
             data[genre] = data[genre_columns].apply(lambda x: 1 if genre in x.values else 0, axis=1)
         logger.info(f"Created binary columns for {len(genres)} genres")
 
-        # Convert episodes to numeric, handle non-numeric values
+        # Convert episodes and members to numeric, handle non-numeric values
         data['episodes'] = pd.to_numeric(data['episodes'], errors='coerce').fillna(data['episodes'].median())
-        logger.info("Converted episodes to numeric")
+        data['members'] = pd.to_numeric(data['members'], errors='coerce').fillna(data['members'].median())
+        logger.info("Converted episodes and members to numeric")
 
         # Ensure numerical columns are float
         data['rating'] = pd.to_numeric(data['rating'], errors='coerce').fillna(data['rating'].median())
-        data['members'] = pd.to_numeric(data['members'], errors='coerce').fillna(data['members'].median())
         logger.info("Ensured numerical columns are float")
 
-        # Create PopularityLevel column
-        quantiles = data['members'].quantile([0.33, 0.66])
+        # Create PopularityLevel column based on rating
+        quantiles = data['rating'].quantile([0.33, 0.66])
         data['PopularityLevel'] = pd.cut(
-            data['members'],
+            data['rating'],
             bins=[-float('inf'), quantiles[0.33], quantiles[0.66], float('inf')],
             labels=['Unpopular', 'Popular', 'Super Hit'],
             include_lowest=True
         )
-        logger.info("Created PopularityLevel column")
+        logger.info("Created PopularityLevel column based on rating")
 
         # Normalize numerical features
         scaler = StandardScaler()
-        scaled_features = scaler.fit_transform(data[['rating', 'episodes', 'members']])
+        scaled_features = scaler.fit_transform(data[['episodes', 'members']])
         scaled_df = pd.DataFrame(
             scaled_features,
-            columns=['rating_scaled', 'episodes_scaled', 'members_scaled'],
+            columns=['episodes_scaled', 'members_scaled'],
             index=data.index
         )
         data = pd.concat([data, scaled_df], axis=1)
-        logger.info("Created scaled columns: rating_scaled, episodes_scaled, members_scaled")
+        logger.info("Created scaled columns: episodes_scaled, members_scaled")
 
         # Verify scaled columns exist
-        if not all(col in data.columns for col in ['rating_scaled', 'episodes_scaled', 'members_scaled']):
+        if not all(col in data.columns for col in ['episodes_scaled', 'members_scaled']):
             raise ValueError("Scaled columns were not created properly")
 
         data.to_pickle(processed_file)
@@ -200,7 +200,6 @@ with st.sidebar.expander("Anime Filters", expanded=True):
     rating_range = st.slider("Rating Range", float(data['rating'].min()), float(data['rating'].max()), 
                            (float(data['rating'].min()), float(data['rating'].max())), step=0.1)
     types = st.multiselect("Anime Type", sorted(data['type'].unique()), default=data['type'].unique())
-    # Use multi-class PopularityLevel for filtering
     popularity_levels = st.multiselect("Popularity Level", sorted(data['PopularityLevel'].unique()), 
                                      default=data['PopularityLevel'].unique())
 with st.sidebar.expander("Genre Filters", expanded=True):
@@ -212,8 +211,6 @@ with st.sidebar.expander("Genre Filters", expanded=True):
 with st.sidebar.expander("Advanced Filters", expanded=False):
     episodes_range = st.slider("Episodes", float(data['episodes'].min()), float(data['episodes'].max()), 
                              (float(data['episodes'].min()), float(data['episodes'].max())), step=1.0)
-    members_range = st.slider("Members", float(data['members'].min()), float(data['members'].max()), 
-                            (float(data['members'].min()), float(data['members'].max())), step=1000.0)
 
 if st.sidebar.button("Reset Filters", use_container_width=True):
     rating_range = (float(data['rating'].min()), float(data['rating'].max()))
@@ -221,7 +218,6 @@ if st.sidebar.button("Reset Filters", use_container_width=True):
     popularity_levels = data['PopularityLevel'].unique()
     selected_genres = []
     episodes_range = (float(data['episodes'].min()), float(data['episodes'].max()))
-    members_range = (float(data['members'].min()), float(data['members'].max()))
 
 # Apply filters
 if st.sidebar.button("Apply Filters", type="primary", use_container_width=True):
@@ -229,19 +225,17 @@ if st.sidebar.button("Apply Filters", type="primary", use_container_width=True):
         filtered_data = data[
             (data['rating'].between(rating_range[0], rating_range[1])) &
             (data['type'].isin(types)) &
-            (data['PopularityLevel'].isin(popularity_levels)) &  # Use multi-class PopularityLevel
-            (data['episodes'].between(episodes_range[0], episodes_range[1])) &
-            (data['members'].between(members_range[0], members_range[1]))
+            (data['PopularityLevel'].isin(popularity_levels)) &
+            (data['episodes'].between(episodes_range[0], episodes_range[1]))
         ]
         if selected_genres:
             genre_condition = filtered_data[selected_genres].sum(axis=1) > 0
             filtered_data = filtered_data[genre_condition]
         if filtered_data.empty or len(filtered_data) < 50:
             st.markdown('<p class="error-message">No data matches the selected filters or insufficient data (less than 50 anime).</p>', unsafe_allow_html=True)
-            st.session_state['filtered_data'] = data  # Fallback to original data
+            st.session_state['filtered_data'] = data
         else:
             st.session_state['filtered_data'] = filtered_data
-            # Clear cached model to ensure retraining with new data
             train_model.clear()
             logger.info(f"Filtered dataset to {len(filtered_data)} rows")
 
@@ -258,9 +252,9 @@ def train_model(data):
         if data.empty or len(data) < 50:
             raise ValueError("Insufficient data for training. At least 50 rows are required.")
 
-        # Prepare feature columns efficiently
-        feature_columns = ['rating_scaled', 'episodes_scaled', 'members_scaled']
-        genre_columns = [col for col in data.columns if col not in data.columns.difference(['genre.1', 'genre.2', 'genre.3', 'genre.4']) and col not in ['genre.1', 'genre.2', 'genre.3', 'genre.4', 'name', 'type', 'rating', 'episodes', 'members', 'PopularityLevel', 'rating_scaled', 'episodes_scaled', 'members_scaled']]
+        # Prepare feature columns
+        feature_columns = ['members_scaled', 'episodes_scaled']
+        genre_columns = [col for col in data.columns if col not in data.columns.difference(['genre.1', 'genre.2', 'genre.3', 'genre.4']) and col not in ['genre.1', 'genre.2', 'genre.3', 'genre.4', 'name', 'type', 'rating', 'episodes', 'members', 'PopularityLevel', 'episodes_scaled', 'members_scaled']]
         feature_columns.extend(genre_columns)
 
         # Combined validation
@@ -273,14 +267,19 @@ def train_model(data):
             raise ValueError("PopularityLevel column is missing")
 
         # Create binary target for training
-        binary_target = data['PopularityLevel'].apply(lambda x: 0 if x == 'Unpopular' else 1)  # Unpopular vs. Popular/Super Hit
-        if len(np.unique(binary_target)) < 2:
-            raise ValueError("Binary target has fewer than 2 unique classes")
+        binary_target = data['PopularityLevel'].apply(lambda x: 0 if x == 'Unpopular' else 1)
+        unique_classes = np.unique(binary_target)
+        if len(unique_classes) < 2:
+            raise ValueError(f"Binary target has only one class: {unique_classes}. At least two classes are required.")
 
         # Prepare features and binary target
         X = data[feature_columns]
         le = LabelEncoder()
         y = le.fit_transform(binary_target)
+
+        # Verify binary classes after encoding
+        if len(np.unique(y)) != 2:
+            raise ValueError(f"Encoded target has {len(np.unique(y))} classes instead of 2")
 
         # Split data
         X_train, X_test, y_train, y_test = train_test_split(
@@ -289,8 +288,8 @@ def train_model(data):
 
         # Train model with optimized parameters
         model = GradientBoostingClassifier(
-            n_estimators=50,  # Reduced for faster training
-            max_depth=3,      # Limit depth to reduce computation
+            n_estimators=50,
+            max_depth=3,
             random_state=42
         )
         model.fit(X_train, y_train)
@@ -305,8 +304,8 @@ def train_model(data):
             'Importance': model.feature_importances_
         }).sort_values('Importance', ascending=False)
 
-        # SHAP values (limit sample size for speed)
-        sample_size = min(100, len(X_test))  # Use at most 100 samples
+        # SHAP values
+        sample_size = min(100, len(X_test))
         X_test_sample = X_test.sample(sample_size, random_state=42) if sample_size < len(X_test) else X_test
         explainer = shap.TreeExplainer(model)
         shap_values = explainer.shap_values(X_test_sample)
@@ -322,10 +321,9 @@ def train_model(data):
 # Content-based recommendation system
 def get_recommendations(anime_name, df, top_n=5):
     try:
-        feature_columns = ['rating_scaled', 'episodes_scaled', 'members_scaled'] + \
+        feature_columns = ['members_scaled', 'episodes_scaled'] + \
                          [col for col in df.columns if col in set(df[['genre.1', 'genre.2', 'genre.3', 'genre.4']].values.ravel()) and col != '']
         
-        # Verify feature columns exist
         missing_cols = [col for col in feature_columns if col not in df.columns]
         if missing_cols:
             raise ValueError(f"Missing columns in DataFrame: {missing_cols}")
@@ -433,23 +431,20 @@ if len(filtered_data) >= 50:
                 st.markdown('<div class="card">', unsafe_allow_html=True)
                 st.markdown("#### Predict Anime Popularity")
                 with st.form("anime_popularity_form"):
-                    rating = st.number_input("Rating", min_value=0.0, max_value=10.0, value=float(filtered_data['rating'].median()), step=0.1)
+                    members = st.number_input("Members", min_value=0.0, max_value=float(data['members'].max()), value=float(filtered_data['members'].median()), step=1000.0)
                     episodes = st.number_input("Episodes", min_value=1.0, max_value=1000.0, value=float(filtered_data['episodes'].median()), step=1.0)
-                    members = st.number_input("Members", min_value=0.0, max_value=2000000.0, value=float(filtered_data['members'].median()), step=1000.0)
                     form_genres = st.multiselect("Genres", sorted(genres), default=[])
                     submit_button = st.form_submit_button("Predict Popularity")
                 if submit_button and 'model' in st.session_state:
                     try:
                         scaler = StandardScaler()
-                        numerical_features = scaler.fit_transform([[rating, episodes, members]])
+                        numerical_features = scaler.fit_transform([[episodes, members]])
                         genre_features = [1 if genre in form_genres else 0 for genre in sorted(genres)]
                         sample = np.concatenate([numerical_features[0], genre_features])
                         model = st.session_state['model']
                         prediction = model.predict([sample])[0]
-                        label_encoder = LabelEncoder().fit(['Unpopular', 'Popular/Super Hit'])  # Match binary training labels
-                        predicted_label = label_encoder.inverse_transform([prediction])[0]
+                        predicted_label = 'Popular/Super Hit' if prediction == 1 else 'Unpopular'
                         st.success(f"Predicted Popularity: {predicted_label}")
-                        # Map binary prediction to multi-class for comparables
                         if predicted_label == 'Popular/Super Hit':
                             comparables = filtered_data[filtered_data['PopularityLevel'].isin(['Popular', 'Super Hit'])]
                         else:
@@ -473,7 +468,6 @@ if len(filtered_data) >= 50:
                     st.markdown("#### SHAP Analysis")
                     try:
                         fig, ax = plt.subplots(figsize=(10, 6))
-                        # Handle binary SHAP values
                         shap.summary_plot(st.session_state['shap_values'], features=st.session_state['X_test'], feature_names=st.session_state['X_test'].columns, plot_type="bar", show=False)
                         st.pyplot(fig)
                         plt.close(fig)
@@ -507,8 +501,8 @@ if len(filtered_data) >= 50:
             st.markdown("#### Prediction Distribution")
             try:
                 pred_dist = pd.DataFrame({
-                    'Actual': LabelEncoder().fit(['Unpopular', 'Popular/Super Hit']).inverse_transform(st.session_state['y_test']),
-                    'Predicted': LabelEncoder().fit(['Unpopular', 'Popular/Super Hit']).inverse_transform(st.session_state['y_pred'])
+                    'Actual': ['Unpopular' if x == 0 else 'Popular/Super Hit' for x in st.session_state['y_test']],
+                    'Predicted': ['Unpopular' if x == 0 else 'Popular/Super Hit' for x in st.session_state['y_pred']]
                 })
                 fig = px.histogram(pred_dist, x=['Actual', 'Predicted'], barmode='overlay', title="Actual vs Predicted Popularity Distribution")
                 fig.update_layout(xaxis_title="Popularity Level", yaxis_title="Count", height=500)
@@ -520,7 +514,7 @@ if len(filtered_data) >= 50:
     with tabs[3]:
         st.markdown('<div class="sub-header">💡 Advanced Insights</div>', unsafe_allow_html=True)
         st.markdown("#### Raw Data")
-        st.dataframe(filtered_data[['name', 'type', 'rating', 'episodes', 'members', 'PopularityLevel']], hide_index=True, height=400)
+        st.dataframe(filtered_data[['name', 'type', 'rating', 'episodes', 'PopularityLevel']], hide_index=True, height=400)
         def convert_df(df):
             return df.to_csv(index=False).encode('utf-8')
         csv = convert_df(filtered_data)
@@ -563,6 +557,6 @@ else:
 # Footer
 st.markdown("""
 <div style="text-align: center; padding: 1rem;">
-    <p style="color: #5c5c5c;">Powered by xAI | Built with Streamlit | Data updated as of 08:01 PM IST, July 06, 2025</p>
+    <p style="color: #5c5c5c;"> Built with Streamlit | Data updated as of 10:16 AM IST, July 17, 2025</p>
 </div>
 """, unsafe_allow_html=True)
