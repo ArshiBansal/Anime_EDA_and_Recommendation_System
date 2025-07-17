@@ -559,4 +559,4 @@ st.markdown("""
 <div style="text-align: center; padding: 1rem;">
     <p style="color: #5c5c5c;"> Built with Streamlit | Data updated as of 10:16 AM IST, July 17, 2025</p>
 </div>
-""", unsafe_allow_html=True)    
+""", unsafe_allow_html=True)
